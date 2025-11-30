@@ -1,0 +1,481 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>極簡單字克漏字 (20/day) — 間隔複習</title>
+<style>
+  :root{font-family:system-ui,-apple-system,"Helvetica Neue",Arial;}
+  body{margin:0;background:#fafafa;color:#111;display:flex;align-items:flex-start;justify-content:center;padding:20px;min-height:100vh}
+  .card{width:100%;max-width:720px;background:#fff;border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,0.06);padding:18px}
+  h1{margin:0 0 8px;font-size:18px}
+  p.sub{margin:0 0 16px;color:#666;font-size:13px}
+  .topbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+  .btn{background:#111;color:#fff;padding:8px 12px;border-radius:8px;border:none;cursor:pointer;font-weight:600}
+  .btn.ghost{background:transparent;color:#111;border:1px solid #ddd}
+  .muted{color:#777;font-size:13px}
+  .stats{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+  .stat{background:#f5f6f8;padding:8px 10px;border-radius:8px;font-size:13px;color:#333}
+  .question{margin:18px 0;padding:14px;border-radius:8px;background:#f8fafb;border:1px solid #eef2f5}
+  .chinese{font-size:18px;margin-bottom:8px}
+  .sentence{color:#444;margin-bottom:10px}
+  input[type="text"]{width:100%;padding:10px;border-radius:8px;border:1px solid #ddd;font-size:16px}
+  .controls{display:flex;gap:8px;margin-top:10px}
+  .small{font-size:13px;color:#666}
+  textarea{width:100%;height:120px;padding:8px;border-radius:8px;border:1px solid #ddd;font-size:13px}
+  .import-area{margin-top:12px}
+  .list{max-height:220px;overflow:auto;margin-top:12px;border-top:1px dashed #eee;padding-top:10px}
+  .row{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #fafafa}
+  .tag{font-size:12px;color:#666}
+  footer{margin-top:16px;font-size:12px;color:#999;text-align:center}
+  @media (max-width:520px){.card{padding:14px}}
+</style>
+</head>
+<body>
+  <div class="card" id="app">
+    <h1>極簡單字克漏字（20 / day）</h1>
+    <p class="sub">中 → 英（克漏字句子支援 <code>{{word}}</code>） • 間隔複習（離線、免註冊）</p>
+
+    <div class="topbar">
+      <button class="btn" id="nextBtn">出下一題</button>
+      <button class="btn ghost" id="showProgress">進度</button>
+      <button class="btn ghost" id="addManual">新增單字</button>
+      <label class="muted">每日新單字上限：<strong id="dailyLimit">20</strong></label>
+      <label style="margin-left:auto" class="muted">已準備題目：<strong id="poolCount">0</strong></label>
+    </div>
+
+    <div class="stats" id="statsBar">
+      <div class="stat">今天新單字：<strong id="todayNew">0</strong></div>
+      <div class="stat">待複習：<strong id="dueCount">0</strong></div>
+      <div class="stat">總單字數：<strong id="totalCount">0</strong></div>
+    </div>
+
+    <div id="questionArea" style="display:none">
+      <div class="question">
+        <div class="chinese" id="chineseHint">中文解釋或中文句子</div>
+        <div class="sentence" id="clozeSentence"></div>
+        <input type="text" id="answerInput" placeholder="輸入英文，按 Enter 送出" autocomplete="off" />
+        <div class="controls">
+          <button class="btn" id="submitBtn">送出</button>
+          <button class="btn ghost" id="showAnswer">看答案</button>
+          <div class="small" id="timerText" style="margin-left:auto"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="emptyArea" style="display:none">
+      <p class="muted">目前沒有到期題目。按 「出下一題」 開始練習（或匯入單字）。</p>
+    </div>
+
+    <div class="import-area">
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="file" id="csvFile" accept=".csv" />
+        <button class="btn ghost" id="importBtn">匯入 CSV</button>
+        <button class="btn ghost" id="clearAll">清空全部資料</button>
+      </div>
+      <p class="small muted" style="margin-top:6px">CSV 每列：<code>english, chinese, sentence</code>。sentence 請把單字用 <code>{{word}}</code> 包起來（可留空）。</p>
+      <div style="margin-top:8px">
+        <textarea id="pasteArea" placeholder="你也可以貼上 CSV 內容再按「貼上匯入」"></textarea>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button class="btn ghost" id="pasteImport">貼上匯入</button>
+          <button class="btn ghost" id="downloadSample">下載範例 CSV</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="list" id="listArea"></div>
+
+    <footer>
+      記錄儲存在此裝置。若要載入 7000 單請匯入 CSV（推薦分批匯入）。任何問題直接叫我。
+    </footer>
+  </div>
+
+<script>
+(() => {
+  // 設定
+  const DAILY_NEW_LIMIT = 20; // 固定 20
+  const STORAGE_KEY = 'vocab_cloze_v1';
+  const NOW = () => Date.now();
+  const minutes = m => m * 60 * 1000;
+  const hours = h => h * 60 * 60 * 1000;
+  const days = d => d * 24 * 60 * 60 * 1000;
+
+  // 間隔策略
+  const correctIntervals = [1,3,7,30,90].map(d => days(d)); // stage 升級時間
+  const wrongSchedule = [minutes(5), minutes(20), days(1)]; // 錯誤時的再考延後（依錯誤次數）
+
+  // DOM
+  const nextBtn = document.getElementById('nextBtn');
+  const showProgress = document.getElementById('showProgress');
+  const poolCount = document.getElementById('poolCount');
+  const todayNew = document.getElementById('todayNew');
+  const dueCount = document.getElementById('dueCount');
+  const totalCount = document.getElementById('totalCount');
+  const dailyLimitLabel = document.getElementById('dailyLimit');
+  const questionArea = document.getElementById('questionArea');
+  const emptyArea = document.getElementById('emptyArea');
+  const chineseHint = document.getElementById('chineseHint');
+  const clozeSentence = document.getElementById('clozeSentence');
+  const answerInput = document.getElementById('answerInput');
+  const submitBtn = document.getElementById('submitBtn');
+  const showAnswerBtn = document.getElementById('showAnswer');
+  const listArea = document.getElementById('listArea');
+  const csvFile = document.getElementById('csvFile');
+  const importBtn = document.getElementById('importBtn');
+  const pasteArea = document.getElementById('pasteArea');
+  const pasteImport = document.getElementById('pasteImport');
+  const downloadSample = document.getElementById('downloadSample');
+  const clearAllBtn = document.getElementById('clearAll');
+  const addManualBtn = document.getElementById('addManual');
+  const timerText = document.getElementById('timerText');
+
+  dailyLimitLabel.textContent = DAILY_NEW_LIMIT;
+
+  // 內建範例單字（只示範幾個）
+  const SAMPLE = [
+    {english:'accomplish', chinese:'完成', sentence:'He managed to {{word}} the task on time.'},
+    {english:'challenge', chinese:'挑戰', sentence:'The exam was a big {{word}} for him.'},
+    {english:'sudden', chinese:'突然的', sentence:'There was a {{word}} noise from the kitchen.'},
+    {english:'improve', chinese:'改善/提升', sentence:'She wanted to {{word}} her English.'},
+    {english:'protect', chinese:'保護', sentence:'We must {{word}} our environment.'}
+  ];
+
+  // 資料結構
+  // 每個 item:
+  // {
+  //   id: string,
+  //   english: string,
+  //   chinese: string,
+  //   sentence: string,
+  //   createdAt: timestamp,
+  //   stage: int (0..n),
+  //   wrongCount: int (recent consecutive wrongs),
+  //   nextReview: timestamp,
+  //   seenToday: bool
+  // }
+
+  function uid(){return 'id_' + Math.random().toString(36).slice(2,9)}
+
+  // load / save
+  function load() {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) {
+      // 程式第一次使用：放幾個範例
+      const init = SAMPLE.slice().map(s => ({
+        id: uid(),
+        english: s.english.trim(),
+        chinese: s.chinese.trim(),
+        sentence: s.sentence || '',
+        createdAt: NOW(),
+        stage: 0,
+        wrongCount: 0,
+        nextReview: NOW(), // 立刻可考
+        seenToday: false
+      }));
+      save(init);
+      return init;
+    }
+    try {
+      return JSON.parse(raw);
+    } catch (e) {
+      console.error('parse error', e);
+      return [];
+    }
+  }
+  function save(data){ localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); }
+
+  // utilities
+  function nowReadable(ts){ const d = new Date(ts); return d.toLocaleString(); }
+  function setNextReviewForCorrect(item){
+    // 升級 stage
+    item.stage = Math.min(item.stage + 1, correctIntervals.length);
+    if (item.stage === correctIntervals.length) {
+      item.nextReview = Infinity; // 已完成
+    } else {
+      item.nextReview = NOW() + correctIntervals[item.stage - 1]; // stage 1 -> intervals[0] (1 day)
+    }
+    item.wrongCount = 0;
+  }
+  function setNextReviewForWrong(item){
+    item.wrongCount = (item.wrongCount || 0) + 1;
+    const idx = Math.min(item.wrongCount - 1, wrongSchedule.length - 1);
+    const delay = wrongSchedule[idx];
+    item.nextReview = NOW() + delay;
+  }
+
+  // core queue
+  let data = load();
+
+  function countDue(){
+    const now = NOW();
+    return data.filter(it => it.nextReview <= now).length;
+  }
+
+  function countTotal(){
+    return data.length;
+  }
+
+  function countTodayNew(){
+    // new = stage 0 and seenToday = false and createdAt older than start of today?
+    return data.filter(it => it.stage === 0 && !it.seenToday).length;
+  }
+
+  function getNextItem(){
+    const now = NOW();
+    // 優先：已到期的（nextReview <= now），然後 new (stage 0) 但每日限額內
+    const due = data.filter(it => it.nextReview <= now).sort((a,b)=>a.nextReview - b.nextReview);
+    if (due.length) return due[0];
+    return null;
+  }
+
+  function allocateDailyNew() {
+    // 若今天沒有太多新單字被加入 daily practice，從未見過（stage 0, !seenToday）抓 up to (DAILY_NEW_LIMIT - todayNewAlreadySeen)
+    const todayNewAlready = data.filter(it => it.stage === 0 && it.seenToday).length;
+    const remain = Math.max(0, DAILY_NEW_LIMIT - todayNewAlready);
+    if (remain <= 0) return;
+    const candidates = data.filter(it => it.stage === 0 && !it.seenToday).slice(0, remain);
+    // 把 candidates 設為 nextReview = now (讓它可被考)
+    candidates.forEach(it => {
+      it.nextReview = NOW();
+    });
+    save(data);
+  }
+
+  function showStats(){
+    poolCount.textContent = data.filter(it => it.nextReview <= NOW()).length;
+    todayNew.textContent = data.filter(it => it.stage === 0 && it.seenToday).length;
+    dueCount.textContent = countDue();
+    totalCount.textContent = countTotal();
+  }
+
+  // render list area for quick management
+  function renderList(){
+    listArea.innerHTML = '';
+    const sorted = data.slice().sort((a,b)=> (a.nextReview||0) - (b.nextReview||0));
+    sorted.forEach(it=>{
+      const row = document.createElement('div'); row.className='row';
+      const left = document.createElement('div');
+      left.innerHTML = `<strong>${it.english}</strong> <span class="tag">(${it.chinese || '-'})</span><div class="small">${it.sentence || ''}</div>`;
+      const right = document.createElement('div');
+      const next = (it.nextReview === Infinity) ? '完成' : (it.nextReview ? new Date(it.nextReview).toLocaleString() : '-');
+      right.innerHTML = `<div class="small">${it.stage>0? 'stage ' + it.stage : 'new'} · 下次：${next}</div>
+        <div style="display:flex;gap:8px;margin-top:6px">
+          <button class="btn ghost" data-edit="${it.id}">編輯</button>
+          <button class="btn ghost" data-delete="${it.id}">刪除</button>
+        </div>`;
+      row.appendChild(left); row.appendChild(right);
+      listArea.appendChild(row);
+    });
+    // attach events
+    listArea.querySelectorAll('[data-delete]').forEach(btn=>{
+      btn.addEventListener('click', e=>{
+        const id = btn.getAttribute('data-delete');
+        if (!confirm('確定刪除？')) return;
+        data = data.filter(x=>x.id !== id); save(data); renderList(); showStats();
+      });
+    });
+    listArea.querySelectorAll('[data-edit]').forEach(btn=>{
+      btn.addEventListener('click', e=>{
+        const id = btn.getAttribute('data-edit'); const it = data.find(x=>x.id===id);
+        if (!it) return;
+        const newEng = prompt('英文單字', it.english); if (!newEng) return;
+        const newChi = prompt('中文', it.chinese || ''); const newSent = prompt('句子（用 {{word}} 包字）', it.sentence || '');
+        it.english = newEng.trim(); it.chinese = newChi ? newChi.trim() : '';
+        it.sentence = newSent ? newSent.trim() : '';
+        save(data); renderList(); showStats();
+      });
+    });
+  }
+
+  // question flow
+  let current = null;
+  let timerInterval = null;
+
+  function showQuestion(it){
+    current = it;
+    if (!it) {
+      questionArea.style.display = 'none';
+      emptyArea.style.display = 'block';
+      timerText.textContent = '';
+      return;
+    }
+    questionArea.style.display = 'block';
+    emptyArea.style.display = 'none';
+    chineseHint.textContent = it.chinese || '(無中文)';
+    // prepare cloze sentence
+    if (it.sentence && it.sentence.includes('{{word}}')) {
+      clozeSentence.innerHTML = it.sentence.replace('{{word}}', '<u style="letter-spacing:0.12em">_____</u>');
+    } else {
+      clozeSentence.innerHTML = '<span class="muted">（沒有提供句子）</span>';
+    }
+    answerInput.value = '';
+    answerInput.focus();
+    // mark seenToday if new
+    if (it.stage === 0 && !it.seenToday) {
+      it.seenToday = true;
+      save(data); showStats();
+    }
+    // countdown if nextReview in future (shouldn't happen if we pick due)
+    if (it.nextReview && it.nextReview > NOW()) {
+      startTimer(it.nextReview);
+    } else {
+      timerText.textContent = '';
+      stopTimer();
+    }
+  }
+
+  function startTimer(untilTs){
+    stopTimer();
+    function tick(){
+      const diff = untilTs - NOW();
+      if (diff <= 0) { timerText.textContent = ''; stopTimer(); return; }
+      const m = Math.floor(diff/60000);
+      const s = Math.floor((diff%60000)/1000);
+      timerText.textContent = `下次出題：${m}分 ${s}秒`;
+    }
+    tick(); timerInterval = setInterval(tick, 500);
+  }
+  function stopTimer(){ if (timerInterval) { clearInterval(timerInterval); timerInterval = null; } }
+
+  function normalizeAnswer(str){
+    return str.trim().toLowerCase().replace(/\s+/g,' ');
+  }
+
+  function revealAnswer(){
+    if (!current) return;
+    alert(`答案：${current.english}`);
+  }
+
+  function submitAnswer(){
+    if (!current) return;
+    const raw = answerInput.value || '';
+    const ok = normalizeAnswer(raw) === normalizeAnswer(current.english);
+    if (ok) {
+      setNextReviewForCorrect(current);
+      alert('回答正確 ✅');
+    } else {
+      setNextReviewForWrong(current);
+      alert('回答錯誤 ❌\n正確答案：' + current.english);
+    }
+    save(data);
+    current = null;
+    showStats();
+    renderList();
+    // 自動出下一題（優先出已到期）
+    allocateDailyNew();
+    const next = getNextItem();
+    showQuestion(next);
+  }
+
+  // events
+  nextBtn.addEventListener('click', ()=>{
+    allocateDailyNew();
+    const it = getNextItem();
+    if (!it) {
+      showQuestion(null);
+      alert('目前沒有到期題目，請匯入或新增單字。');
+      return;
+    }
+    showQuestion(it);
+  });
+
+  submitBtn.addEventListener('click', submitAnswer);
+  answerInput.addEventListener('keydown', e=>{ if (e.key === 'Enter') submitAnswer(); });
+  showAnswerBtn.addEventListener('click', revealAnswer);
+
+  showProgress.addEventListener('click', ()=>{
+    renderList();
+    alert('下方顯示所有單字及下次複習時間。');
+  });
+
+  // import CSV
+  function parseCSV(text){
+    // extremely simple CSV parse: split lines, split by comma (not handling quoted commas)
+    const lines = text.split(/\r?\n/).map(l=>l.trim()).filter(l=>l);
+    const items = [];
+    for (const line of lines){
+      const parts = line.split(',');
+      const english = (parts[0] || '').trim();
+      const chinese = (parts[1] || '').trim();
+      const sentence = (parts.slice(2).join(',') || '').trim();
+      if (!english) continue;
+      items.push({english,chinese,sentence});
+    }
+    return items;
+  }
+
+  importBtn.addEventListener('click', ()=>{
+    const file = csvFile.files[0];
+    if (!file) { alert('請選擇 CSV 檔'); return; }
+    const reader = new FileReader();
+    reader.onload = e=>{
+      const items = parseCSV(e.target.result);
+      for (const it of items){
+        data.push({
+          id: uid(), english: it.english, chinese: it.chinese, sentence: it.sentence,
+          createdAt: NOW(), stage: 0, wrongCount:0, nextReview: Infinity, seenToday:false
+        });
+      }
+      // 新匯入的預設不會馬上出現，使用 allocateDailyNew 會排進今天學習。
+      save(data); showStats(); renderList(); alert('匯入完成：' + items.length + ' 筆');
+    };
+    reader.readAsText(file,'utf-8');
+  });
+
+  pasteImport.addEventListener('click', ()=>{
+    const txt = pasteArea.value.trim(); if (!txt) { alert('請貼上 CSV 內容'); return; }
+    const items = parseCSV(txt);
+    for (const it of items){
+      data.push({
+        id: uid(), english: it.english, chinese: it.chinese, sentence: it.sentence,
+        createdAt: NOW(), stage: 0, wrongCount:0, nextReview: Infinity, seenToday:false
+      });
+    }
+    save(data); showStats(); renderList(); alert('貼上匯入完成：' + items.length + ' 筆');
+  });
+
+  downloadSample.addEventListener('click', ()=>{
+    const sample = 'accomplish,完成,He managed to {{word}} the task on time.\nchallenge,挑戰,The test was a big {{word}} for him.\nimprove,改善,She wanted to {{word}} her English.';
+    const blob = new Blob([sample], {type:'text/csv'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'sample_vocab.csv'; a.click(); URL.revokeObjectURL(url);
+  });
+
+  clearAllBtn.addEventListener('click', ()=>{
+    if (!confirm('真的要清空全部單字與進度？此動作無法復原')) return;
+    data = []; save(data); renderList(); showStats(); alert('已清空');
+  });
+
+  addManualBtn.addEventListener('click', ()=>{
+    const eng = prompt('英文 (必填)');
+    if (!eng) return;
+    const chi = prompt('中文（可不填）','');
+    const sent = prompt('句子（用 {{word}} 包住）','');
+    data.push({id: uid(), english: eng.trim(), chinese: chi?chi.trim():'', sentence: sent?sent.trim():'', createdAt: NOW(), stage:0, wrongCount:0, nextReview: Infinity, seenToday:false});
+    save(data); renderList(); showStats(); alert('已加入');
+  });
+
+  // initialize view
+  function init(){
+    data = load();
+    // fix any malformed nextReview
+    data.forEach(it=>{
+      if (!it.nextReview) it.nextReview = Infinity;
+    });
+    showStats();
+    renderList();
+    allocateDailyNew();
+    showStats();
+    // show empty initially
+    showQuestion(null);
+  }
+
+  init();
+
+  // auto-save periodically (just in case)
+  setInterval(()=>{ save(data); }, 5000);
+
+})();
+</script>
+</body>
+</html>
